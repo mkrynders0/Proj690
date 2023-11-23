@@ -14,8 +14,7 @@ Every proposal message is tagged with a round ID.
 All received proposals must match the round ID.
 
 """
-
-class Peer:
+class FloodingProcess():
     def __init__(self, process_id):
         self.proposal_set = []         # List of all proposed values.
         self.received_from = dict()    # Process list from which proposals have been received per round.
@@ -144,34 +143,34 @@ class Peer:
         # TODO: Update to get current
         return self.current_connections
 
-if __name__ == "__main__":
-    p1 = Peer(process_id=1)
-    p2 = Peer(process_id=2)
-    p3 = Peer(process_id=3)
-    p4 = Peer(process_id=4)
+# if __name__ == "__main__":
+    # p1 = Peer(process_id=1)
+    # p2 = Peer(process_id=2)
+    # p3 = Peer(process_id=3)
+    # p4 = Peer(process_id=4)
 
     
-    # Connect P1
-    p1.current_connections = [p2, p3, p4]
-    p1.initial_connections = [p2, p3, p4]
+    # # Connect P1
+    # p1.current_connections = [p2, p3, p4]
+    # p1.initial_connections = [p2, p3, p4]
 
-    # Connect P2
-    p2.current_connections = [p1, p3, p4]
-    p2.initial_connections = [p1, p3, p4]
+    # # Connect P2
+    # p2.current_connections = [p1, p3, p4]
+    # p2.initial_connections = [p1, p3, p4]
 
-    # Connect P3
-    p3.current_connections = [p2, p1, p4]
-    p3.initial_connections = [p2, p1, p4]
+    # # Connect P3
+    # p3.current_connections = [p2, p1, p4]
+    # p3.initial_connections = [p2, p1, p4]
 
-    # Connect P2
-    p4.current_connections = [p2, p3, p1]
-    p4.initial_connections = [p2, p3, p1]
+    # # Connect P2
+    # p4.current_connections = [p2, p3, p1]
+    # p4.initial_connections = [p2, p3, p1]
 
 
-    p1.propose(value='b')
+    # p1.propose(value='b')
 
-    p2.propose(value ='c')
+    # p2.propose(value ='c')
 
-    p3.propose(value = 'd')
+    # p3.propose(value = 'd')
 
-    p4.propose(value = 'b')
+    # p4.propose(value = 'b')
