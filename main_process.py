@@ -2,7 +2,7 @@ from classes import Process
 
 if __name__ == "__main__":
 
-    port_number = input("Enter process port number \n")
+    port_number = input("Enter process port number: \n")
 
     process = Process("0.0.0.0", int(port_number))
     process.start()
@@ -17,6 +17,10 @@ if __name__ == "__main__":
     max_val = 4
     
     while(True):
-        if max_val == 0:
-            break
+        current_round_id = process.current_round_id
+        proposed_value = input(f"Waiting for round {current_round_id} proposal...\n")
+        process.propose(proposed_value)
+        while (True):
+            if process.current_round_id != current_round_id:
+                break
     
