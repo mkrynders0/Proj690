@@ -15,10 +15,11 @@ class Process:
         self.proposal_set = []           # List of all proposed values.
         self.decided_rounds = []         # List of round IDs that have been decided.
         self.current_out_ports = set()   # List of out ports currently connected.
+        self.current_accepted_addresses = set()
         self.initial_out_ports = set()   # List of initial connections' ports from the current round's start.
         self.received_from = dict()      # Dict of process ports that have been received from per round.
         self.current_round_id = 0        # ID of the current round.
-        self.proposed_this_round = False # T/F has the process proposed for this round.
+        self.proposed_for_round = dict() # T/F has the process proposed for this round.
         self.round_crash = False
 
     # ****************** #
@@ -40,7 +41,13 @@ class Process:
         data -- dictionary to be decoded.
         Return: decoded version of dictionary data.
         """
-        return json.loads(data.decode('utf-8'))
+        # Need to handle receiving more than one msg at once
+        decoded_data = data.decode('utf-8')
+        data_message = decoded_data.split('}')
+        data_message = [i+'}' for i in data_message]
+        data_message.remove('}')
+
+        return [json.loads(i) for i in data_message]
 
     def connect_to_rendezvous(self, server_host, server_port):
         """Create connection to server to access group of peers.
@@ -71,7 +78,7 @@ class Process:
         # Create socket to connect to the peer.
         connection = socket.create_connection((peer_host, peer_port))
         self.connections.append(connection)
-        self.current_out_ports.add(peer_port)
+        # self.current_out_ports.add(peer_port)
         self.port_address_map[address[1]] = peer_port
 
         print(f"Connected to {peer_host}:{peer_port} on {connection.getpeername()[1]}")
@@ -84,19 +91,22 @@ class Process:
         connection -- peer connection that has crashed.
         address -- host address of the crashed peer.
         Return: N/A
-        """
-        print(f"Connection from {address} closed.")
-        # Set crash flag
-        self.round_crash = True
+        """ 
+        
 
         # Remove from current connections and close the connection.
         self.connections.remove(connection)
-        self.current_out_ports.remove(self.port_address_map[address[1]])
         connection.close()
 
-        # Check if process has now received all values from updated current connections.
-        # TODO: Need to check for all past rounds...?
-        self.check_end_of_round()
+        if address:
+            print(f"Connection from {address} closed.")
+            self.current_accepted_addresses.remove(address)
+
+            # Set crash flag
+            self.round_crash = True
+
+            # Check if process has now received all values from updated current connections.
+            self.check_end_of_round()
 
     def listen(self):
         """Listen to a socket connection for incoming data.
@@ -112,6 +122,7 @@ class Process:
             connection, address = self.socket.accept()
             self.connections.append(connection)
             print(f"Accepted connection from {address}")
+            self.current_accepted_addresses.add(address)
             threading.Thread(target=self.handle_client, args=(connection, address)).start()
 
     def send_data(self, data):
@@ -126,8 +137,8 @@ class Process:
                 connection.sendall(self.encode_data(data))
             except socket.error as e:
                 print(e)
-                # TODO: This might actually be the port number already
-                self.crash_connection(connection.getpeername()[1])
+                self.crash_connection(connection)
+                continue
 
     def handle_client(self, connection, address):
         """Receive and handle incoming data from connected nodes.
@@ -150,40 +161,45 @@ class Process:
                 data = connection.recv(1024)
                 if not data:
                     break
-                data_message = self.decode_data(data) 
-                print(f"Received data from {address}: {data_message}")
-                      
-                message_type = data_message.keys()
+                # print(f"Received data from {address}: {data}")
+                data_messages = self.decode_data(data) 
+                print(f"Received data from {address}: {data_messages}")
 
-                if 'new' in message_type:
-                    # Connect to new node.
-                    new_port = data_message['new']
+                for data_message in data_messages:     
+                    message_type = data_message.keys()
 
-                    if new_port != self.port:
-                        # Connect to new node
-                        self.connect(address, "127.0.0.1", new_port)
-                        print(f'Connected to new port {new_port}')
+                    if 'new' in message_type:
+                        # Connect to new node.
+                        new_port = data_message['new']
 
-                elif 'ports' in message_type:
-                    # Connect to all other peers in the network.
-                    ports = data_message['ports']
-                    for port in ports:
-                        if port != self.port:
-                            # Connect to the new peer.
-                            new_connection = self.connect(address, "127.0.0.1", port)
+                        if new_port != self.port:
+                            # Connect to new node
+                            self.connect(address, "127.0.0.1", new_port)
+                            print(f'Connected to new port {new_port}')
 
-                            # Request to be added to the peer's connections.
-                            new_connection.sendall(self.encode_data({'new': self.port}))
+                    elif 'ports' in message_type:
+                        # Connect to all other peers in the network.
+                        ports = data_message['ports']
+                        for port in ports:
+                            if port != self.port:
+                                # Connect to the new peer.
+                                new_connection = self.connect(address, "127.0.0.1", port)
 
-                elif 'proposal' in message_type:
-                    round_id =  data_message['proposal'][0]
-                    proposal_set = data_message['proposal'][1]
-                    self.receive_proposal(self.port_address_map[address[1]], round_id, proposal_set)
+                                # Request to be added to the peer's connections.
+                                new_connection.sendall(self.encode_data({'new': self.port}))
 
-                elif 'decision' in message_type:
-                    round_id = data_message['decision'][0]
-                    decided_value = data_message['decision'][1]
-                    self.decide(force_decision=decided_value, round_id=round_id)
+                    elif 'proposal' in message_type:
+                        round_id =  data_message['proposal'][0]
+                        proposal_set = data_message['proposal'][1]
+                        self.receive_proposal(address, round_id, proposal_set)
+
+                    elif 'decision' in message_type:
+                        round_id = data_message['decision'][0]
+                        decided_value = data_message['decision'][1]
+                        self.decide(force_decision=decided_value, round_id=round_id)
+                        # Only end round if receiving a decision for the current round.
+                        if round_id == self.current_round_id:
+                            self.end_round()
 
             except socket.error:
                 self.crash_connection(connection=connection, address=address)
@@ -210,7 +226,7 @@ class Process:
         """
         # Add value to proposal set. 
         self.consolidate_proposal_sets([value])
-        self.proposed_this_round = True
+        self.proposed_for_round[self.current_round_id] = True
 
         # Broadcast proposal set to all peers.
         self.send_data({'proposal': (self.current_round_id, self.proposal_set)}) 
@@ -229,6 +245,8 @@ class Process:
         if round_id in self.decided_rounds:
             return
         
+        self.decided_rounds.append(round_id)
+
         if force_decision:
             # Force decision if a decision has been received from another process for this round.
             self.consolidate_proposal_sets([force_decision])
@@ -237,11 +255,11 @@ class Process:
             # Set decided val to largest val in list.
             val = self.proposal_set[-1]
       
-        self.decided_rounds.append(round_id)
-        print(f'Process has decided on value {val} for round {round_id}.')
+        
+        print(f'*** Process has decided on value {val} for round {round_id}.')
 
         # Broadcast decision to all peers.
-        self.send_data({'decision': (self.current_round_id, val)}) 
+        self.send_data({'decision': (self.current_round_id, val)})
 
     def check_end_of_round(self):
         """Determine if the process has reached the end of the currenet round.
@@ -250,23 +268,28 @@ class Process:
         Return: N/A
         """
         # Check if the process has received all possible values from the current connections.
-        print("Checking end of round")
+        print(f"Checking end of round {self.current_round_id}...")
         received_all_possible = False
         if self.current_round_id in self.received_from.keys():
-            print(f"Received from this round {self.received_from[self.current_round_id]}?\n")
-            print(f"Current out ports {self.current_out_ports}")
+            print(f"Received from this round {self.received_from[self.current_round_id]}?")
+            print(f"Current accepted addresses {self.current_accepted_addresses}\n")
 
-            received_from_ports = self.received_from[self.current_round_id]
+            # Get list of addresses that the process has received proposals from.
+            received_from_addresses = self.received_from[self.current_round_id]
 
-            received_all_possible = len(received_from_ports) == len(self.current_out_ports) and \
-                set(received_from_ports).issubset(set(self.current_out_ports)) and \
-                self.proposed_this_round
+            # Determine if the process has proposed a value for the round.
+            has_proposed = self.proposed_for_round[self.current_round_id] if self.current_round_id in self.proposed_for_round.keys() else False
+
+            # Check if process has received all possible proposals from self and  peer processes. Add one for server connection.
+            received_all_possible = len(received_from_addresses) + 1 == len(self.current_accepted_addresses) and \
+                received_from_addresses.issubset(self.current_accepted_addresses) and has_proposed
 
         if received_all_possible:
             # End the round.
             if not self.round_crash:
                 # Only decide on a value if there have been no crashes in the current round.
                 self.decide(round_id=self.current_round_id)
+                
             self.end_round()
 
     def end_round(self):
@@ -274,15 +297,20 @@ class Process:
         
         Return: N/A
         """
+        print("Ending round...")
         # Increment the round ID and reset the round's initial connections.
         self.current_round_id += 1 
-        self.initial_out_ports = self.current_out_ports
+        self.initial_accepted_addresses = self.current_accepted_addresses
 
-        # Reset round flags
-        self.proposed_this_round = self.round_crash = False
+        # Needs chance to decide again this round if there were crashes before.
+        if self.round_crash:
+            self.proposed_for_round[self.current_round_id] = True
+            # Broadcast proposal set to all peers for past round in case of crash.
+            self.send_data({'proposal': (self.current_round_id, self.proposal_set)}) 
+        else:
+            self.proposed_for_round[self.current_round_id] = False
 
-        # Broadcast proposal set to all peers.
-        self.send_data({'propose': self.proposal_set}) 
+        self.round_crash = False
 
     def consolidate_proposal_sets(self, proposal_set):
         """Add a proposal to this process's proposal set.
@@ -294,7 +322,7 @@ class Process:
         self.proposal_set = sorted(list(set(self.proposal_set) | set(proposal_set)))
         print(f"consolidated set: {self.proposal_set}")
 
-    def receive_proposal(self, port_number, round_id, proposal_set):
+    def receive_proposal(self, address, round_id, proposal_set):
         """ Receive a proposal from a connected node.
         Record that a value has been received from a node during a specified round.
         
@@ -304,14 +332,14 @@ class Process:
         proposed_value -- str value to be appended to the proposal set.
         Return: N/A
         """
-        print(f"Receive proposal from {port_number}")
+        # print(f"Receive proposal from {address}")
         # Add port to received from for the specified round.
         if round_id in self.received_from.keys():
             # If round_id has already been received, add port to that round.
-            self.received_from[round_id].append(port_number)
+            self.received_from[round_id].add(address)
         else:
             # If round has not yet been received from, initialize round ID as key and add port.
-            self.received_from[round_id] = [port_number]
+            self.received_from[round_id] = {address}
 
         # Add value to set and check if it was the last possible value to conclude the round.
         self.consolidate_proposal_sets(proposal_set)

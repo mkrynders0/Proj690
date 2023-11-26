@@ -18,8 +18,9 @@ if __name__ == "__main__":
     
     while(True):
         current_round_id = process.current_round_id
-        proposed_value = input(f"Waiting for round {current_round_id} proposal...\n")
-        process.propose(proposed_value)
+        if current_round_id not in process.proposed_for_round.keys() or not process.proposed_for_round[current_round_id]:
+            proposed_value = input(f"*** Waiting for round {current_round_id} proposal...\n")
+            process.propose(proposed_value)
         while (True):
             if process.current_round_id != current_round_id:
                 break
