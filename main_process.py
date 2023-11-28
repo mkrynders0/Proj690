@@ -6,7 +6,6 @@ the flooding protocol with its peers.
 
 from classes import Process
 
-
 if __name__ == "__main__":
 
     # Get port number for process.
