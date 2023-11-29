@@ -15,11 +15,14 @@ class Process:
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connections = []
+        self.out_connections = []
         self.server_connection = None
+        self.lock = threading.Lock()
 
         # Flooding Algorithm #
         self.proposal_set = []    # List of all proposed values.
         self.decided_rounds = []  # List of round IDs that have been decided.
+        self.ended_rounds = []    # List of rounds that have been ended to avoid race conditions.
 
         self.received_from = dict()       # Dict of process ports that have been received from per round.
         self.proposed_for_round = dict()  # Flag for if the process proposed per round.
@@ -90,6 +93,7 @@ class Process:
         # Create socket to connect to the peer.
         connection = socket.create_connection((peer_host, peer_port))
         self.connections.append(connection)
+        self.out_connections.append(connection)
 
         print(f"Now sending data to {peer_host}:{peer_port}")
         return connection
@@ -117,6 +121,8 @@ class Process:
 
             # Check if process has now received all values from updated current connections.
             self.check_end_of_round()
+        else:
+            self.out_connections.remove(connection)
 
     def listen(self):
         """Listen to a socket connection for incoming data.
@@ -145,7 +151,7 @@ class Process:
         Return: N/A
         """
         print(f"Sending {data} to all.")
-        for connection in self.connections:
+        for connection in self.out_connections:
             try:
                 connection.sendall(self.encode_data(data))
             except socket.error as e:
@@ -161,8 +167,10 @@ class Process:
         Return: N/A
         """
         try:
+            print(f"sending to {connection}")
             connection.sendall(self.encode_data(data))
         except socket.error as e:
+            print(f"failed to send {connection}")
             self.crash_connection(connection)
 
     def handle_client(self, connection, address):
@@ -268,7 +276,7 @@ class Process:
         
         Return: N/A
         """
-        print(f"Starting decisionfor round {round_id}...")
+        print(f"Starting decision for round {round_id}...")
         # Don't need to decide if round was already decided on.
         if round_id in self.decided_rounds:
             print(f"Has already decided for round {round_id}.")
@@ -281,7 +289,7 @@ class Process:
             val = force_decision
         else:
             # Set decided val to largest val in list.
-            val = self.proposal_set[-1]
+            val = max(self.proposal_set)
       
         
         print(f'** Process has decided on value {val} for round {round_id}.**\n')
@@ -295,37 +303,50 @@ class Process:
         
         Return: N/A
         """
-        # Check if the process has received all possible values from the current connections.
-        print(f"Checking end of round {self.current_round_id}...")
-        received_all_possible = False
-        
-        if self.current_round_id in self.received_from.keys():
+        self.lock.acquire()
 
-            # Get list of addresses that the process has received proposals from.
-            received_from_addresses = self.received_from[self.current_round_id]
+        try:
+            # Check if the process has received all possible values from the current connections.
+            print(f"Checking end of round {self.current_round_id}...")
+            received_all_possible = False
+            
+            
+            if self.current_round_id in self.received_from.keys():
 
-            # Determine if the process has proposed a value for the round.
-            has_proposed = self.proposed_for_round[self.current_round_id] if self.current_round_id in self.proposed_for_round.keys() else False
-
-            # Check if process has received all possible proposals from self and  peer processes. Add one for server connection.
-            received_all_possible = self.current_accepted_addresses.issubset(received_from_addresses) and has_proposed
-
-        if received_all_possible:
-            # End the round.
-            if not self.round_crash:
-                # Only decide on a value if there have been no crashes in the current round.
-                self.decide(round_id=self.current_round_id)
                 
-            self.end_round()
-        else:
-            print("Round should not end.")
+                # Get list of addresses that the process has received proposals from.
+                received_from_addresses = self.received_from[self.current_round_id]
+
+                # Determine if the process has proposed a value for the round.
+                has_proposed = self.proposed_for_round[self.current_round_id] if self.current_round_id in self.proposed_for_round.keys() else False
+
+                # Check if process has received all possible proposals from self and  peer processes. Add one for server connection.
+                received_all_possible = self.current_accepted_addresses.issubset(received_from_addresses) and has_proposed
+
+            if received_all_possible:
+                # End the round.
+                if not self.round_crash:
+                    # Only decide on a value if there have been no crashes in the current round.
+                    self.decide(round_id=self.current_round_id)
+                    
+                self.end_round()
+            else:
+                print("Round should not end.")
+        finally:
+            self.lock.release()
 
     def end_round(self):
         """End the current round and reset for the next round.
         
         Return: N/A
         """
+        if self.current_round_id in self.ended_rounds:
+            print("Already ended round.")
+            return
+        
+        self.ended_rounds.append(self.current_round_id)
         print(f"Ending round {self.current_round_id}...\n")
+
         # Increment the round ID and reset the round's initial connections.
         self.current_round_id += 1 
         self.initial_accepted_addresses = self.current_accepted_addresses
