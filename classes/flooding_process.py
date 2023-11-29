@@ -15,8 +15,8 @@ All received proposals must match the round ID.
 
 """
 
-class Peer:
-    def __init__(self, process_id):
+class FloodingProcess():
+    def __init__(self, host_address, process_id):
         self.proposal_set = []         # List of all proposed values.
         self.received_from = dict()    # Process list from which proposals have been received per round.
         self.current_round_id = 0      # ID of the current round.
@@ -27,6 +27,8 @@ class Peer:
         self.decided_rounds = []
         self.proposed_this_round = False
 
+        super().__init__(host_address, port_number=process_id)
+
     def propose(self, value):
         """ Propose a user input value. 
         Add value to proposal set and broadcast to all connected nodes.
@@ -35,10 +37,15 @@ class Peer:
         value -- user entered value
         Return: N/A
         """
+        # Add value to proposal set. 
         self.proposal_set.append(value)
         self.proposal_set = sorted(self.proposal_set)
-        self.broadcast_proposal_set()
         self.proposed_this_round = True
+
+        # Broadcast set to peer nodes.
+        self.broadcast_proposal_set()
+        
+        # Check if this was the last value needed for the round.
         self.check_end_of_round()
 
     def broadcast_proposal_set(self):
@@ -143,35 +150,3 @@ class Peer:
     def get_current_connections(self):
         # TODO: Update to get current
         return self.current_connections
-
-if __name__ == "__main__":
-    p1 = Peer(process_id=1)
-    p2 = Peer(process_id=2)
-    p3 = Peer(process_id=3)
-    p4 = Peer(process_id=4)
-
-    
-    # Connect P1
-    p1.current_connections = [p2, p3, p4]
-    p1.initial_connections = [p2, p3, p4]
-
-    # Connect P2
-    p2.current_connections = [p1, p3, p4]
-    p2.initial_connections = [p1, p3, p4]
-
-    # Connect P3
-    p3.current_connections = [p2, p1, p4]
-    p3.initial_connections = [p2, p1, p4]
-
-    # Connect P2
-    p4.current_connections = [p2, p3, p1]
-    p4.initial_connections = [p2, p3, p1]
-
-
-    p1.propose(value='b')
-
-    p2.propose(value ='c')
-
-    p3.propose(value = 'd')
-
-    p4.propose(value = 'b')
